@@ -79,17 +79,33 @@ def get_events():
 
 # ────────────── Todoist: 예정됨(Upcoming) ──────────────
 def fetch_todoist(filter_str=None):
-    params = {}
-    if filter_str:
-        params["filter"] = filter_str
-    r = requests.get(
-        "https://api.todoist.com/rest/v2/tasks",
-        headers={"Authorization": f"Bearer {TODOIST_TOKEN}"},
-        params=params,
-        timeout=15,
-    )
-    r.raise_for_status()
-    return r.json()
+    """Todoist 새 API(v1)로 모든 활성 할 일을 가져온다. 페이지네이션 처리 포함."""
+    url = "https://api.todoist.com/api/v1/tasks"
+    headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
+
+    all_tasks = []
+    cursor = None
+    while True:
+        params = {"limit": 200}
+        if cursor:
+            params["cursor"] = cursor
+        r = requests.get(url, headers=headers, params=params, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+
+        # 새 API는 {"results": [...], "next_cursor": ...}, 옛 API는 그냥 리스트
+        if isinstance(data, dict):
+            all_tasks.extend(data.get("results", []))
+            cursor = data.get("next_cursor")
+        else:
+            all_tasks.extend(data)
+            cursor = None
+
+        if not cursor:
+            break
+
+    return all_tasks
+
 
 
 def is_recurring(t):
