@@ -78,49 +78,57 @@ def get_events():
 
 
 # ────────────── Todoist: 예정됨(Upcoming) ──────────────
-def fetch_todoist(filter_str):
+def fetch_todoist(filter_str=None):
+    params = {}
+    if filter_str:
+        params["filter"] = filter_str
     r = requests.get(
         "https://api.todoist.com/rest/v2/tasks",
         headers={"Authorization": f"Bearer {TODOIST_TOKEN}"},
-        params={"filter": filter_str},
+        params=params,
         timeout=15,
     )
     r.raise_for_status()
     return r.json()
 
+
 def is_recurring(t):
     return bool((t.get("due") or {}).get("is_recurring"))
 
 def get_upcoming_tasks():
-    # 예정됨 = 지난 것 + 오늘 + 앞으로 N일 (마감일 있는 할 일)
-    tasks = fetch_todoist(f"overdue | today | (due before: +{DAYS_AHEAD} days)")
+    # 필터 없이 '모든 활성 할 일'을 가져온 뒤 파이썬에서 날짜로 거른다
+    # (Todoist 필터는 계정 언어에 종속되어 영어 키워드가 안 먹는 경우가 있음)
+    tasks = fetch_todoist(None)   # 필터 없음
+
+    today = datetime.now(KST).date()
+    limit = today + timedelta(days=DAYS_AHEAD)   # 앞으로 N일까지 (지난 것 포함)
 
     P = {4: "P1", 3: "P2", 2: "P3", 1: "P4"}
-    groups = {}   # date(str) -> [line...]
+    groups = {}
     for t in tasks:
         due = (t.get("due") or {}).get("date", "")
         if not due:
+            continue                      # 마감일 없는 할 일은 제외
+        try:
+            d = datetime.strptime(due[:10], "%Y-%m-%d").date()
+        except ValueError:
             continue
-        dkey = due[:10]                      # 'YYYY-MM-DD'
+        if d > limit:                     # N일보다 먼 미래는 제외
+            continue
         mark = "🔁 " if is_recurring(t) else ""
         p = P.get(t.get("priority", 1), "P4")
-        groups.setdefault(dkey, []).append(
+        groups.setdefault(d, []).append(
             (t.get("priority", 1), f"   • [{p}] {mark}{esc(t['content'])}")
         )
 
-    today = datetime.now(KST).date()
     lines = []
-    for dkey in sorted(groups):
-        try:
-            d = datetime.strptime(dkey, "%Y-%m-%d").date()
-            label = ("지난 " if d < today else "") + daylabel(d) if d != today else daylabel(d)
-        except ValueError:
-            label = dkey
+    for d in sorted(groups):
+        label = ("지난 " if d < today else "") + daylabel(d) if d != today else daylabel(d)
         lines.append(f" <b>{label}</b>")
-        # 같은 날 안에서는 우선순위 높은 순
-        for _, line in sorted(groups[dkey], key=lambda x: -x[0]):
+        for _, line in sorted(groups[d], key=lambda x: -x[0]):
             lines.append(line)
     return lines
+
 
 
 # ────────────── 텔레그램 ──────────────
